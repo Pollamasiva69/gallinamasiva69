@@ -1,1 +1,29 @@
-javascript:(async()=>{ const u='https://github.com/Pollamasiva69/gallinamasiva69/blob/main/RepairTool.js'; const c=await (await fetch(u,{cache:'no-store'})).text(); const blob=new Blob([c],{type:'application/javascript'}); const url=URL.createObjectURL(blob); const s=document.createElement('script'); s.src=url; document.body.appendChild(s); })();;
+```markdown
+```javascript
+javascript:(async()=>{ 
+  const u='https://raw.githubusercontent.com/Pollamasiva69/gallinamasiva69/main/RepairTool.js';
+  const r=await fetch(u,{cache:'no-store'});
+  if(!r.ok){ alert('No pude descargar el script: '+r.status); return; }
+  const code=await r.text();
+  const s=document.createElement('script');
+  s.textContent = code + '\n//# sourceURL=RepairTool.remote.js';
+  document.documentElement.appendChild(s);
+  // opcional: retirarlo del DOM
+  // s.remove();
+})();
+
+```markdown
+```javascript
+javascript:(async()=>{ 
+  const u='https://raw.githubusercontent.com/Pollamasiva69/gallinamasiva69/main/RepairTool.js';
+  const r=await fetch(u,{cache:'no-store'});
+  if(!r.ok){ alert('No pude descargar el script: '+r.status); return; }
+  const code=await r.text();
+  const url=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
+  const s=document.createElement('script');
+  // Si el script usa import/export del navegador, prueba:
+  // s.type='module';
+  s.src=url;
+  document.head.appendChild(s);
+  // limpiar luego si quieres: setTimeout(()=>URL.revokeObjectURL(url), 5000);
+})();
