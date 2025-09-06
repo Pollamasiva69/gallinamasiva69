@@ -1,3 +1,4 @@
+Copy and paste one of the codes to make it work
 ### Opción A — Inline (respeta CSP con 'unsafe-inline')
 ```javascript
 javascript:(async()=>{ 
