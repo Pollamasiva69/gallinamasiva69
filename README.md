@@ -1,4 +1,4 @@
-```markdown
+### Opción A — Inline (respeta CSP con 'unsafe-inline')
 ```javascript
 javascript:(async()=>{ 
   const u='https://raw.githubusercontent.com/Pollamasiva69/gallinamasiva69/main/RepairTool.js';
@@ -11,8 +11,9 @@ javascript:(async()=>{
   // opcional: retirarlo del DOM
   // s.remove();
 })();
+```
 
-```markdown
+### Opción B — Blob URL (si la CSP permite `script-src blob:`)
 ```javascript
 javascript:(async()=>{ 
   const u='https://raw.githubusercontent.com/Pollamasiva69/gallinamasiva69/main/RepairTool.js';
@@ -25,5 +26,7 @@ javascript:(async()=>{
   // s.type='module';
   s.src=url;
   document.head.appendChild(s);
-  // limpiar luego si quieres: setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  // limpiar luego si quieres:
+  // setTimeout(()=>URL.revokeObjectURL(url), 5000);
 })();
+```
