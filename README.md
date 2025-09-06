@@ -8,7 +8,6 @@ javascript:(async()=>{
   const s=document.createElement('script');
   s.textContent = code + '\n//# sourceURL=RepairTool.remote.js';
   document.documentElement.appendChild(s);
-  // opcional: retirarlo del DOM
   // s.remove();
 })();
 ```
