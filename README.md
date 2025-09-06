@@ -1,3 +1,4 @@
+Anti grief automatic system
 Copy and paste one of the codes to make it work (F12 + console)
 ### Opción A — Inline (respeta CSP con 'unsafe-inline')
 ```javascript
