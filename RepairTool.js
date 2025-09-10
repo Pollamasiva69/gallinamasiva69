@@ -17,6 +17,12 @@
     TOKEN_PRELOAD_BUFFER: 60000, // Preload tokens 1 minute before expiry
     MAX_RETRIES: 10,
     RETRY_DELAY_BASE: 1000,
+    // Configuración simplificada para detección de daño
+    GRIEF_DETECTION: {
+      ENABLE_COMPREHENSIVE_REPAIR: true, // Reparar cualquier pixel incorrecto
+      INCLUDE_TRANSPARENT_REPAIR: false, // Incluir pixeles transparentes en la reparación
+      INCLUDE_WHITE_REPAIR: false, // Incluir pixeles blancos en la reparación
+    },
     COLOR_MAP: {
       0: { id: 1, name: 'Black', rgb: { r: 0, g: 0, b: 0 } },
       1: { id: 2, name: 'Dark Gray', rgb: { r: 60, g: 60, b: 60 } },
@@ -100,7 +106,7 @@
     startPosition: null,
     region: null,
     paintWhitePixels: true,
-    paintTransparentPixels: false,
+    paintTransparentPixels: true, // Cambio: ahora por defecto es true para reparar todo
     autoRepairEnabled: false,
     autoRepairInterval: 30,
     autoRepairTimer: null,
@@ -117,6 +123,10 @@
     windowMinimized: false,
     lastAttackState: null,
     initialSetupComplete: false,
+    // Configuración simplificada
+    enableComprehensiveRepair: CONFIG.GRIEF_DETECTION.ENABLE_COMPREHENSIVE_REPAIR,
+    includeTransparentRepair: CONFIG.GRIEF_DETECTION.INCLUDE_TRANSPARENT_REPAIR,
+    includeWhiteRepair: CONFIG.GRIEF_DETECTION.INCLUDE_WHITE_REPAIR,
   };
 
   // Random string generator
@@ -726,9 +736,10 @@
     fileOperationsAvailable: 'File operations available',
     initializingToken: 'Initializing token system...',
     tokenReady: 'Token system ready',
+    comprehensiveRepairEnabled: 'Comprehensive repair enabled',
   };
 
-  // UTILIDADES ACTUALIZADAS CON NUEVA IMPLEMENTACIÓN TURNSTILE
+  // UTILIDADES ACTUALIZADAS CON LÓGICA SIMPLIFICADA
   const Utils = {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 
@@ -812,6 +823,37 @@
     isWhitePixel: (r, g, b) => {
       const wt = state.customWhiteThreshold || CONFIG.WHITE_THRESHOLD;
       return r >= wt && g >= wt && b >= wt;
+    },
+
+    // FUNCIÓN SIMPLIFICADA: Determina si un pixel necesita ser reparado
+    needsRepair: (currentPixel, originalRgb, targetColorId, currentColorId) => {
+      if (!state.enableComprehensiveRepair) {
+        // Modo básico: solo reparar si los colores son diferentes
+        return targetColorId !== currentColorId;
+      }
+
+      // Modo comprehensivo: reparar cualquier pixel que no coincida exactamente
+      if (targetColorId !== currentColorId) {
+        return true;
+      }
+
+      // Si currentPixel es null o no existe, necesita reparación
+      if (!currentPixel || currentPixel.length < 3) {
+        return true;
+      }
+
+      // Si el pixel actual es transparente pero debería tener color
+      if (state.includeTransparentRepair && currentPixel.length >= 4) {
+        const currentAlpha = currentPixel[3];
+        const [originalR, originalG, originalB] = originalRgb;
+        
+        // Si el pixel actual es muy transparente pero el original tiene valores RGB definidos
+        if (currentAlpha < 50 && originalR !== undefined && originalG !== undefined && originalB !== undefined) {
+          return true;
+        }
+      }
+
+      return false;
     },
 
     resolveColor(targetRgb, availableColors) {
@@ -1342,7 +1384,6 @@
 
     async getTilePixelColor(tileX, tileY, pixelX, pixelY) {
       const tileKey = `${tileX},${tileY}`;
-      const alphaThresh = state.customTransparencyThreshold || CONFIG.TRANSPARENCY_THRESHOLD;
 
       const cached = this.originalTilesData.get(tileKey);
       if (cached && cached.data && cached.w > 0 && cached.h > 0) {
@@ -1350,12 +1391,8 @@
         const y = Math.max(0, Math.min(cached.h - 1, pixelY));
         const idx = (y * cached.w + x) * 4;
         const d = cached.data;
-        const a = d[idx + 3];
 
-        if (!state.paintTransparentPixels && a < alphaThresh) {
-          return null;
-        }
-        return [d[idx], d[idx + 1], d[idx + 2], a];
+        return [d[idx], d[idx + 1], d[idx + 2], d[idx + 3]];
       }
 
       const bitmap = this.originalTiles.get(tileKey);
@@ -1383,13 +1420,8 @@
         const x = Math.max(0, Math.min(bitmap.width - 1, pixelX));
         const y = Math.max(0, Math.min(bitmap.height - 1, pixelY));
         const data = ctx.getImageData(x, y, 1, 1).data;
-        const a = data[3];
 
-        if (!state.paintTransparentPixels && a < alphaThresh) {
-          return null;
-        }
-
-        return [data[0], data[1], data[2], a];
+        return [data[0], data[1], data[2], data[3]];
       } catch (e) {
         Utils.addDebugLog(`Error reading pixel from tile ${tileKey}: ${e.message}`, 'error');
         return null;
@@ -1416,7 +1448,7 @@
 
       if (requiredTiles.length === 0) return true;
 
-      Utils.addDebugLog(`Waiting for ${requiredTiles.length} tiles (autonomous: ${this.autonomousMode})...`, 'info');
+      Utils.addDebugLog(`Waiting for ${requiredTiles.length} tiles (comprehensive repair mode)...`, 'info');
 
       const startTime = Date.now();
       let lastProgress = 0;
@@ -1457,7 +1489,7 @@
 
   const overlayManager = new OverlayManager();
 
-  // Enhanced WPlace API Service with autonomous capabilities - ACTUALIZADO CON NUEVA LÓGICA
+  // Enhanced WPlace API Service with autonomous capabilities
   const WPlaceService = {
     async paintPixelInRegion(regionX, regionY, pixelX, pixelY, color, retryCount = 0) {
       try {
@@ -1543,14 +1575,14 @@
     },
   };
 
-  // Anti-grief repair system with autonomous capabilities
+  // FUNCIÓN SIMPLIFICADA DE ESCANEADO - REPARA TODO LO QUE NO COINCIDA
   async function scanForDamage() {
     if (!state.imageData || !state.startPosition || !state.region) {
       Utils.addDebugLog('No image data or position for scanning', 'warning');
       return [];
     }
 
-    Utils.addDebugLog('Starting autonomous damage scan...', 'info');
+    Utils.addDebugLog('Starting comprehensive damage scan - will repair any incorrect pixels...', 'info');
     updateStatus(Utils.t('scanningForDamage'));
 
     const damagedPixels = [];
@@ -1579,7 +1611,7 @@
       return [];
     }
 
-    Utils.addDebugLog(`Scanning ${width}x${height} image for damage (autonomous: ${state.autonomousMode})...`, 'info');
+    Utils.addDebugLog(`Scanning ${width}x${height} image for ANY incorrect pixels (comprehensive repair mode)...`, 'info');
 
     let scannedPixels = 0;
     let lastProgressUpdate = Date.now();
@@ -1594,14 +1626,6 @@
         const originalB = pixels[idx + 2];
         const originalA = pixels[idx + 3];
 
-        if (!state.paintTransparentPixels && originalA < CONFIG.TRANSPARENCY_THRESHOLD) {
-          continue;
-        }
-
-        if (!state.paintWhitePixels && Utils.isWhitePixel(originalR, originalG, originalB)) {
-          continue;
-        }
-
         scannedPixels++;
 
         const absX = state.startPosition.x + x;
@@ -1614,28 +1638,40 @@
         try {
           const currentPixel = await overlayManager.getTilePixelColor(tileX, tileY, pixelX, pixelY);
 
-          if (!currentPixel) {
-            if (!state.autonomousMode) {
-              Utils.addDebugLog(`No current pixel data for (${x},${y}) - tile ${tileX},${tileY}`, 'warning');
-            }
-            continue;
+          const targetColor = Utils.resolveColor([originalR, originalG, originalB], state.availableColors);
+          
+          let currentColor = { id: null, rgb: [0, 0, 0] };
+          if (currentPixel && currentPixel.length >= 3) {
+            currentColor = Utils.resolveColor(currentPixel.slice(0, 3), state.availableColors);
           }
 
-          const targetColor = Utils.resolveColor([originalR, originalG, originalB], state.availableColors);
-          const currentColor = Utils.resolveColor(currentPixel.slice(0, 3), state.availableColors);
+          // LÓGICA SIMPLIFICADA: Si el pixel actual no coincide con el esperado, repararlo
+          const needsRepair = Utils.needsRepair(currentPixel, [originalR, originalG, originalB], targetColor.id, currentColor.id);
 
-          if (targetColor.id !== currentColor.id) {
+          if (needsRepair) {
+            let pixelType = 'normal';
+            
+            // Determinar tipo de pixel para logs más informativos
+            if (!currentPixel) {
+              pixelType = 'missing';
+            } else if (currentPixel.length >= 4 && currentPixel[3] < 50) {
+              pixelType = 'transparent';
+            } else if (currentPixel.length >= 3 && Utils.isWhitePixel(currentPixel[0], currentPixel[1], currentPixel[2])) {
+              pixelType = 'white';
+            }
+
             damagedPixels.push({
               x,
               y,
               originalColor: targetColor,
               currentColor: currentColor,
               originalRgb: [originalR, originalG, originalB],
-              currentRgb: currentPixel.slice(0, 3)
+              currentRgb: currentPixel ? currentPixel.slice(0, 3) : [0, 0, 0],
+              pixelType: pixelType,
             });
 
             if (!state.autonomousMode || damagedPixels.length <= 10) {
-              Utils.addDebugLog(`Damage at (${x},${y}): expected color ${targetColor.id}, found color ${currentColor.id}`, 'warning');
+              Utils.addDebugLog(`${pixelType.toUpperCase()} pixel needs repair at (${x},${y}): target color ${targetColor.id}, current color ${currentColor.id}`, 'warning');
             }
           }
         } catch (e) {
@@ -1646,7 +1682,7 @@
       }
 
       if (state.autonomousMode && Date.now() - lastProgressUpdate > 5000) {
-        Utils.addDebugLog(`Scan progress: ${y}/${height} rows (${Math.round((y / height) * 100)}%), found ${damagedPixels.length} damaged`, 'info');
+        Utils.addDebugLog(`Scan progress: ${y}/${height} rows (${Math.round((y / height) * 100)}%), found ${damagedPixels.length} incorrect pixels`, 'info');
         lastProgressUpdate = Date.now();
       } else if (!state.autonomousMode && y % 10 === 0) {
         Utils.addDebugLog(`Scan progress: ${y}/${height} rows (${Math.round((y / height) * 100)}%)`, 'info');
@@ -1654,7 +1690,7 @@
     }
 
     const logLevel = damagedPixels.length > 0 ? 'warning' : 'success';
-    Utils.addDebugLog(`Scan complete. Checked ${scannedPixels} pixels, found ${damagedPixels.length} damaged`, logLevel);
+    Utils.addDebugLog(`Comprehensive scan complete. Checked ${scannedPixels} pixels, found ${damagedPixels.length} that need repair`, logLevel);
 
     return damagedPixels;
   }
@@ -1665,12 +1701,18 @@
       return 0;
     }
 
-    Utils.addDebugLog(`Starting autonomous repair of ${damagedPixels.length} pixels`, 'info');
+    Utils.addDebugLog(`Starting comprehensive repair of ${damagedPixels.length} incorrect pixels`, 'info');
     updateStatus(Utils.t('repairingPixels', { count: damagedPixels.length }));
 
     let repairedCount = 0;
     let consecutiveFailures = 0;
     const maxConsecutiveFailures = state.autonomousMode ? 5 : 3;
+    
+    // Contadores por tipo de pixel
+    let transparentRepaired = 0;
+    let whiteRepaired = 0;
+    let missingRepaired = 0;
+    let normalRepaired = 0;
 
     for (let i = 0; i < damagedPixels.length; i++) {
       const pixel = damagedPixels[i];
@@ -1712,8 +1754,17 @@
       if (success) {
         repairedCount++;
         consecutiveFailures = 0;
+        
+        // Contar tipos de pixeles reparados
+        switch (pixel.pixelType) {
+          case 'transparent': transparentRepaired++; break;
+          case 'white': whiteRepaired++; break;
+          case 'missing': missingRepaired++; break;
+          default: normalRepaired++; break;
+        }
+        
         if (!state.autonomousMode || repairedCount <= 10 || repairedCount % 10 === 0) {
-          Utils.addDebugLog(`Repaired pixel (${pixel.x},${pixel.y}) with color ${pixel.originalColor.id} [${repairedCount}/${damagedPixels.length}]`, 'success');
+          Utils.addDebugLog(`Repaired ${pixel.pixelType} pixel (${pixel.x},${pixel.y}) with color ${pixel.originalColor.id} [${repairedCount}/${damagedPixels.length}]`, 'success');
         }
       } else {
         consecutiveFailures++;
@@ -1743,7 +1794,13 @@
 
     const message = Utils.t('repairComplete', { repaired: repairedCount });
     updateStatus(message);
-    Utils.addDebugLog(`${message} (${damagedPixels.length - repairedCount} remaining)`, 'success');
+    
+    let finalMessage = `${message} (${damagedPixels.length - repairedCount} remaining)`;
+    if (transparentRepaired + whiteRepaired + missingRepaired > 0) {
+      finalMessage += ` - Repaired: ${transparentRepaired} transparent, ${whiteRepaired} white, ${missingRepaired} missing, ${normalRepaired} normal`;
+    }
+    
+    Utils.addDebugLog(finalMessage, 'success');
 
     return repairedCount;
   }
@@ -1791,7 +1848,7 @@
     }
 
     try {
-      Utils.addDebugLog('Autonomous repair check triggered', 'info');
+      Utils.addDebugLog('Autonomous repair check triggered (comprehensive mode)', 'info');
       
       // Ensure we have a valid token before starting
       if (!isTokenValid()) {
@@ -1806,7 +1863,18 @@
       const damagedPixels = await scanForDamage();
 
       if (damagedPixels.length > 0) {
-        Utils.addDebugLog(`Autonomous repair: Found ${damagedPixels.length} damaged pixels, starting repair`, 'warning');
+        const typeStats = damagedPixels.reduce((acc, p) => {
+          acc[p.pixelType] = (acc[p.pixelType] || 0) + 1;
+          return acc;
+        }, {});
+        
+        let damageMessage = `Found ${damagedPixels.length} incorrect pixels`;
+        const types = Object.entries(typeStats).map(([type, count]) => `${count} ${type}`).join(', ');
+        if (types) {
+          damageMessage += ` (${types})`;
+        }
+        
+        Utils.addDebugLog(`Autonomous repair: ${damageMessage}, starting comprehensive repair`, 'warning');
         updateStatus(Utils.t('damageDetected', { count: damagedPixels.length }));
         
         // Show attack notification
@@ -1830,7 +1898,7 @@
         }
         
         if (!state.autonomousMode) {
-          Utils.addDebugLog('Autonomous repair: No damage detected', 'success');
+          Utils.addDebugLog('Autonomous repair: No incorrect pixels detected', 'success');
         }
       }
     } catch (error) {
@@ -1856,8 +1924,8 @@
     state.autoRepairTimer = setInterval(performRepairCheck, intervalMs);
 
     const message = Utils.t('autoRepairStarted', { interval: state.autoRepairInterval });
-    Utils.addDebugLog(`${message} (autonomous: ${state.autonomousMode})`, 'info');
-    Utils.showAlert(message, 'success');
+    Utils.addDebugLog(`${message} (comprehensive repair mode: ON)`, 'info');
+    Utils.showAlert(message + ' (Comprehensive Mode)', 'success');
     
     // Perform first check immediately
     setTimeout(performRepairCheck, 2000);
@@ -1994,7 +2062,8 @@
     if (systemEl) {
       const autonomousStatus = state.autonomousMode ? 'AUTONOMOUS' : 'MANUAL';
       const tokenMode = state.tokenSource.toUpperCase();
-      systemEl.textContent = `System: ${autonomousStatus} | Token: ${tokenMode} | Auto-refresh: ${state.autoTokenRefresh ? 'ON' : 'OFF'}`;
+      const comprehensiveMode = state.enableComprehensiveRepair ? 'ON' : 'OFF';
+      systemEl.textContent = `System: ${autonomousStatus} | Token: ${tokenMode} | Comprehensive: ${comprehensiveMode}`;
     }
   }
 
@@ -2049,7 +2118,7 @@
     document.addEventListener('mousemove', drag);
   }
 
-  // Enhanced UI Creation with NEW IMPLEMENTATION
+  // Enhanced UI Creation with simplified comprehensive repair
   function createUI() {
     const existing = document.getElementById('wplace-repair-tool');
     if (existing) existing.remove();
@@ -2092,7 +2161,7 @@
       <div id="window-content" style="padding: 20px;">
         <div style="margin-bottom: 20px;">
           <div id="status" style="font-size: 14px; color: #b3d9ff; margin-bottom: 10px; min-height: 20px;">
-            ${Utils.t('autonomousModeActive')}
+            ${Utils.t('autonomousModeActive')} + Comprehensive Repair
           </div>
           <div id="chargesInfo" style="font-size: 12px; color: #90caf9;">
             Charges: 0/1 (cooldown: 31s)
@@ -2101,7 +2170,7 @@
             Token: Initializing...
           </div>
           <div id="systemInfo" style="font-size: 10px; color: #ffcc80; margin-top: 3px;">
-            System: AUTONOMOUS | Token: GENERATOR | Auto-refresh: ON
+            System: AUTONOMOUS | Token: GENERATOR | Comprehensive: ON
           </div>
         </div>
 
@@ -2135,7 +2204,7 @@
           <div style="margin-bottom: 10px;">
             <label style="display: flex; align-items: center; cursor: pointer;">
               <input type="checkbox" id="autoRepairEnabled" style="margin-right: 8px;">
-              <span>${Utils.t('enableAutoRepair')} (Enhanced)</span>
+              <span>${Utils.t('enableAutoRepair')} + Comprehensive Repair</span>
             </label>
           </div>
           
@@ -2144,6 +2213,31 @@
             <input type="number" id="repairInterval" value="30" min="10" max="3600" 
                    style="width: 80px; padding: 5px; border-radius: 4px; border: 1px solid #ccc; color: #333;">
             <span style="font-size: 12px; color: #b3d9ff;">seconds</span>
+          </div>
+          
+          <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px;">
+            <div style="font-size: 13px; color: #ffcc80; margin-bottom: 8px; font-weight: 500;">🛡️ Comprehensive Repair Settings</div>
+            
+            <div style="display: flex; gap: 15px; margin-bottom: 8px; flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px;">
+                <input type="checkbox" id="enableComprehensiveRepair" ${state.enableComprehensiveRepair ? 'checked' : ''} style="margin-right: 6px;">
+                <span>Enable Comprehensive Mode</span>
+              </label>
+              <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px;">
+                <input type="checkbox" id="includeTransparentRepair" ${state.includeTransparentRepair ? 'checked' : ''} style="margin-right: 6px;">
+                <span>Include Transparent Pixels</span>
+              </label>
+              <label style="display: flex; align-items: center; cursor: pointer; font-size: 12px;">
+                <input type="checkbox" id="includeWhiteRepair" ${state.includeWhiteRepair ? 'checked' : ''} style="margin-right: 6px;">
+                <span>Include White Pixels</span>
+		
+              </label> 
+            </div>
+            
+            <div style="font-size: 11px; color: #e1f5fe; margin-top: 5px;">
+              <div>• Comprehensive Mode: Repairs ANY pixel that doesn't match the original</div>
+               <div>• Transparent/White: Forces repair even if original settings would skip these</div>
+            </div>
           </div>
           
           <div style="display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
@@ -2170,7 +2264,7 @@
 
         <div style="margin-top: 15px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <h4 style="margin: 0; font-size: 14px; color: #fff;">📋 ${Utils.t('debug')} (Enhanced System)</h4>
+            <h4 style="margin: 0; font-size: 14px; color: #fff;">📋 ${Utils.t('debug')} + Comprehensive</h4>
             <button id="clearDebugBtn" style="
               background: rgba(255,255,255,0.2); color: white; border: none;
               border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer;
@@ -2185,10 +2279,13 @@
             font-family: 'Courier New', monospace; font-size: 11px;
             color: #e3f2fd; line-height: 1.3;
           ">
-            <div style="color: #90caf9;">[Ready] WPlace Autonomous Repair Tool v3.0</div>
-            <div style="color: #81c784;">[Info] NEW Turnstile implementation active</div>
+            <div style="color: #90caf9;">[Ready] WPlace Autonomous Repair Tool v3.1 + Comprehensive Repair</div>
+            <div style="color: #81c784;">[Info] NEW Enhanced Turnstile implementation active</div>
             <div style="color: #ffcc80;">[Info] Enhanced token management with preloading</div>
             <div style="color: #c5e1a5;">[Info] ${Utils.t('tokenSystemReady')}</div>
+            <div style="color: #ff9800;">[New] 🛡️ Comprehensive repair system initialized</div>
+            <div style="color: #e1bee7;">[New] Will repair ANY pixel that doesn't match original</div>
+            <div style="color: #e1bee7;">[New] Includes transparent and white pixels if enabled</div>
           </div>
         </div>
       </div>
@@ -2285,20 +2382,11 @@
         Utils.addDebugLog(`Region: (${state.region?.x}, ${state.region?.y})`, 'info');
         Utils.addDebugLog(`Available colors: ${state.availableColors?.length || 0}`, 'info');
 
-        if (migratedData.state.paintWhitePixels !== undefined) {
-          state.paintWhitePixels = migratedData.state.paintWhitePixels;
-          Utils.addDebugLog(`Paint white pixels: ${state.paintWhitePixels}`, 'info');
-        }
-        if (migratedData.state.paintTransparentPixels !== undefined) {
-          state.paintTransparentPixels = migratedData.state.paintTransparentPixels;
-          Utils.addDebugLog(`Paint transparent pixels: ${state.paintTransparentPixels}`, 'info');
-        }
-
         Utils.showAlert(Utils.t('fileLoaded'), 'success');
         
         // If autonomous mode and auto repair is enabled, start it
         if (state.autonomousMode && document.getElementById('autoRepairEnabled').checked) {
-          Utils.addDebugLog('Autonomous mode: starting auto repair after file load', 'info');
+          Utils.addDebugLog('Autonomous mode: starting comprehensive auto repair after file load', 'info');
           setTimeout(() => {
             state.autoRepairEnabled = true;
             startAutoRepair();
@@ -2365,7 +2453,7 @@
       repairBtn.style.background = 'linear-gradient(135deg, #ff6b35 0%, #f7931e 100%)';
 
       try {
-        Utils.addDebugLog('Starting manual repair with enhanced autonomous system...', 'info');
+        Utils.addDebugLog('Starting manual repair with comprehensive mode...', 'info');
 
         if (!isTokenValid()) {
           Utils.addDebugLog('No valid token, generating...', 'info');
@@ -2430,6 +2518,22 @@
       }
     });
 
+    // NUEVOS EVENT LISTENERS PARA CONFIGURACIÓN COMPREHENSIVA
+    document.getElementById('enableComprehensiveRepair').addEventListener('change', (e) => {
+      state.enableComprehensiveRepair = e.target.checked;
+      Utils.addDebugLog(`Comprehensive repair mode ${state.enableComprehensiveRepair ? 'enabled' : 'disabled'}`, 'info');
+      updateSystemStatus();
+    });
+
+    /* document.getElementById('includeTransparentRepair').addEventListener('change', (e) => {
+      state.includeTransparentRepair = e.target.checked;
+      Utils.addDebugLog(`Transparent pixel repair ${state.includeTransparentRepair ? 'enabled' : 'disabled'}`, 'info');
+    }); */
+    document.getElementById('includeWhiteRepair').addEventListener('change', (e) => {
+      state.includeWhiteRepair = e.target.checked;
+      Utils.addDebugLog(`White pixel repair ${state.includeWhiteRepair ? 'enabled' : 'disabled'}`, 'info');
+    });
+
     // Auto token refresh toggle
     document.getElementById('autoTokenRefresh').addEventListener('change', (e) => {
       state.autoTokenRefresh = e.target.checked;
@@ -2459,7 +2563,7 @@
       state.debugLogs = [];
       updateDebugConsole();
       Utils.addDebugLog('Debug console cleared', 'info');
-      Utils.addDebugLog('Enhanced WPlace Autonomous Repair Tool ready', 'info');
+      Utils.addDebugLog('Enhanced WPlace Autonomous Repair Tool with Comprehensive Repair ready', 'info');
     });
   }
 
@@ -2472,7 +2576,7 @@
       if (!data.imageData) data.imageData = {};
       
       data.state.paintWhitePixels = data.state.paintWhitePixels ?? true;
-      data.state.paintTransparentPixels = data.state.paintTransparentPixels ?? false;
+      data.state.paintTransparentPixels = data.state.paintTransparentPixels ?? true; // Cambio: ahora por defecto true
       
       data.version = '2.0';
     }
@@ -2485,13 +2589,22 @@
       data.version = '3.0';
       Utils.addDebugLog('Migrated to autonomous features v3.0', 'info');
     }
+
+    // NEW: Migration for comprehensive repair features
+    if (data.version === '3.0') {
+      data.state.enableComprehensiveRepair = data.state.enableComprehensiveRepair ?? CONFIG.GRIEF_DETECTION.ENABLE_COMPREHENSIVE_REPAIR;
+      data.state.includeTransparentRepair = data.state.includeTransparentRepair ?? CONFIG.GRIEF_DETECTION.INCLUDE_TRANSPARENT_REPAIR;
+      data.state.includeWhiteRepair = data.state.includeWhiteRepair ?? CONFIG.GRIEF_DETECTION.INCLUDE_WHITE_REPAIR;
+      data.version = '3.1';
+      Utils.addDebugLog('Migrated to comprehensive repair features v3.1', 'info');
+    }
     
     return data;
   }
 
   // Main initialization function
   async function initialize() {
-    Utils.addDebugLog('Starting WPlace Autonomous Repair Tool v3.0...', 'info');
+    Utils.addDebugLog('Starting WPlace Autonomous Repair Tool v3.1 with Comprehensive Repair...', 'info');
     
     // Create UI first
     createUI();
@@ -2505,24 +2618,29 @@
     Utils.addDebugLog('• Adaptive repair algorithms with failure handling', 'info');
     Utils.addDebugLog('• Visual notifications and audio alerts', 'info');
     Utils.addDebugLog('• Draggable window with minimize/close controls', 'info');
+    Utils.addDebugLog('• 🛡️ NEW: Comprehensive repair system', 'info');
+    Utils.addDebugLog('• 🛡️ NEW: Repairs ANY pixel that doesn\'t match original', 'info');
+    Utils.addDebugLog('• 🛡️ NEW: Includes transparent and white pixels', 'info');
+    Utils.addDebugLog('• 🛡️ NEW: Simplified but more effective detection', 'info');
     
     if (state.autonomousMode) {
-      Utils.addDebugLog('AUTONOMOUS MODE ACTIVE - Tool will operate independently', 'success');
+      Utils.addDebugLog('AUTONOMOUS MODE ACTIVE - Tool will operate independently with comprehensive repair', 'success');
       Utils.addDebugLog('Instructions for autonomous operation:', 'info');
       Utils.addDebugLog('1. Wait for initial setup to complete', 'info');
       Utils.addDebugLog('2. Load a progress file using "Load Progress File"', 'info');
-      Utils.addDebugLog('3. Enable "Auto Repair" to start autonomous monitoring', 'info');
-      Utils.addDebugLog('4. Tool will automatically scan and repair damage', 'info');
-      Utils.addDebugLog('5. Tokens will be generated and refreshed automatically', 'info');
-      Utils.addDebugLog('6. Monitor debug console for autonomous operation logs', 'info');
+      Utils.addDebugLog('3. Configure comprehensive repair settings if needed', 'info');
+      Utils.addDebugLog('4. Enable "Auto Repair" to start autonomous monitoring', 'info');
+      Utils.addDebugLog('5. Tool will automatically scan and repair ANY incorrect pixels', 'info');
+      Utils.addDebugLog('6. Tokens will be generated and refreshed automatically', 'info');
+      Utils.addDebugLog('7. Monitor debug console for autonomous operation logs', 'info');
     } else {
       Utils.addDebugLog('Manual mode active - use controls for manual operation', 'info');
     }
     
     // Show autonomous mode status
-    updateStatus(state.autonomousMode ? Utils.t('autonomousModeActive') : 'Manual mode ready - Load file and enable auto repair to start');
+    updateStatus(state.autonomousMode ? Utils.t('autonomousModeActive') + ' + Comprehensive Repair' : 'Manual mode ready - Load file and enable auto repair to start');
     
-    Utils.addDebugLog('WPlace Autonomous Repair Tool ready for operation', 'success');
+    Utils.addDebugLog('WPlace Autonomous Repair Tool with Comprehensive Repair ready for operation', 'success');
   }
 
   // Enhanced cleanup function
