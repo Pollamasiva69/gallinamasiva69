@@ -2640,6 +2640,39 @@
     // Show autonomous mode status
     updateStatus(state.autonomousMode ? Utils.t('autonomousModeActive') + ' + Comprehensive Repair' : 'Manual mode ready - Load file and enable auto repair to start');
     
+	// Prevenir throttling de Chrome en ventanas minimizadas
+if ('requestIdleCallback' in window) {
+  function keepAlive() {
+    requestIdleCallback(keepAlive);
+  }
+  keepAlive();
+}
+
+// Worker alternativo para mantener actividad
+const keepAliveWorker = setInterval(() => {
+  if (state.autoRepairEnabled && !document.hidden) {
+    // Micro-actividad para evitar throttling
+    const dummy = Date.now();
+  }
+}, 5000);
+
+// Ajustar intervalo de auto repair para Chrome minimizado
+const originalStartAutoRepair = startAutoRepair;
+startAutoRepair = function() {
+  // Usar intervalo más corto para compensar throttling
+  const adjustedInterval = Math.max(10, state.autoRepairInterval / 2);
+  
+  if (state.autoRepairTimer) {
+    clearInterval(state.autoRepairTimer);
+  }
+
+  const intervalMs = adjustedInterval * 1000;
+  state.autoRepairTimer = setInterval(performRepairCheck, intervalMs);
+
+  Utils.addDebugLog(`Auto repair started with Chrome-optimized interval: ${adjustedInterval}s`, 'info');
+  setTimeout(performRepairCheck, 2000);
+};
+	
     Utils.addDebugLog('WPlace Autonomous Repair Tool with Comprehensive Repair ready for operation', 'success');
   }
 
@@ -2662,6 +2695,10 @@
       clearTimeout(state.tokenPreloadTimer);
       state.tokenPreloadTimer = null;
     }
+	 // Limpiar el keepAlive worker
+  if (typeof keepAliveWorker !== 'undefined') {
+    clearInterval(keepAliveWorker);
+  }
     
     // Cleanup Turnstile
     Utils.cleanupTurnstile();
